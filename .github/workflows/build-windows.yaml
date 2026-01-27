@@ -29,9 +29,11 @@ jobs:
           # static link libiconv
           ./configure \
             LDFLAGS="-static" \
+            CFLAGS="-O2" \
             LIBS="-liconv" \
-            --enable-multibyte-filename=auto \
-            ac_cv_func_symlink=no
+            --with-tmp-file=no \
+            --enable-multibyte-filename=utf8 \
+            ac_cv_func_iconv=yes
           make
           ./src/lha --version
 
