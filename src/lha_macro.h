@@ -16,6 +16,7 @@
 # define getuid()       0
 # define chown(file, uid, gid)  0
 # define kill(pid, sig)         0
+# define S_ISLNK(m)	0
 #endif
 
 #if defined __DJGPP__
