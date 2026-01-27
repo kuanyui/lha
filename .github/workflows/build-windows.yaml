@@ -1,0 +1,42 @@
+name: Build Windows LHA
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libiconv
+            make
+            autoconf
+            automake
+
+      - name: Compile LHA
+        shell: msys2 {0}
+        run: |
+          autoreconf -is
+          # static link libiconv
+          ./configure \
+            LDFLAGS="-static" \
+            LIBS="-liconv" \
+            --enable-multibyte-filename=auto \
+            ac_cv_func_symlink=no
+          make
+          ./src/lha --version
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lha-windows-x64
+          path: src/lha.exe
