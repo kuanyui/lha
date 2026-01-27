@@ -16,7 +16,11 @@
 # define getuid()       0
 # define chown(file, uid, gid)  0
 # define kill(pid, sig)         0
-# define S_ISLNK(m)	0
+# ifndef __MSYS__         /* If without MSYS compatibility layer (e.g. msys-2.0.dll) */
+#  define symlink(a, b) (-1)
+#  define lstat         stat
+#  define S_ISLNK(m)    (0)
+# endif
 #endif
 
 #if defined __DJGPP__
