@@ -37,8 +37,26 @@ jobs:
           make
           ./src/lha --version
 
+      # The terms of LHa for UNIX (man/lha.man) do not allow distributing the binary alone: it must
+      # come with its source code and documents, and with a document that tells what was modified.
+      # So the package has lha.exe, FORK_MODIFICATIONS.md, and the source code of this commit
+      # (`git archive`, so without the files that the build generated), all at the top of the ZIP.
+      - name: Pack lha.exe with its source code
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path configure.ac -Pattern '^AC_INIT\(\[LHa for UNIX\], *([^,]+),').Matches[0].Groups[1].Value
+          if (-not $version) { throw "No version found in configure.ac" }
+          $name = "lha-$version-win64"
+          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
+          Copy-Item src/lha.exe, FORK_MODIFICATIONS.md "dist/$name/"
+          git archive --format=zip --prefix="lha-$version/" -o "dist/$name/lha-$version-src.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { throw "git archive failed" }
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          Get-ChildItem "dist/$name"
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: lha-windows-x64
-          path: src/lha.exe
+          path: dist/lha-*-win64.zip
+          if-no-files-found: error
