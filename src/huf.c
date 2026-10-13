@@ -389,7 +389,7 @@ read_c_len( /* void */ )
                     c = getbits(4) + 3;
                 else
                     c = getbits(CBIT) + 20;
-                while (--c >= 0)
+                while (--c >= 0 && i < NC)
                     c_len[i++] = 0;
             }
             else
