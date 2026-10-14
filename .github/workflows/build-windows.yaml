@@ -3,6 +3,10 @@ name: Build Windows LHA
 on:
   push:
     branches: [ master ]
+    # The name of a release tag is the version in configure.ac,
+    # for example `1.14i-ac20260723-ky20261014`.
+    # For such a tag, the job `release` also puts the package on the release page of the tag.
+    tags: [ '*-ky[0-9]+' ]
 
 jobs:
   build:
@@ -44,8 +48,14 @@ jobs:
       - name: Pack lha.exe with its source code
         shell: pwsh
         run: |
-          $version = (Select-String -Path configure.ac -Pattern '^AC_INIT\(\[LHa for UNIX\], *([^,]+),').Matches[0].Groups[1].Value
-          if (-not $version) { throw "No version found in configure.ac" }
+          $match = Select-String -Path configure.ac -Pattern '^AC_INIT\(\[LHa for UNIX\], *([^,]+),'
+          if (-not $match) { throw "No version found in configure.ac" }
+          $version = $match.Matches[0].Groups[1].Value
+          # For a tag, the tag name must exactly match the version in configure.ac, including
+          # capitalization. This rule keeps the tag and the ZIP file names at the same version.
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne $version) {
+            throw "The tag '$env:GITHUB_REF_NAME' is not the version in configure.ac ('$version')"
+          }
           $name = "lha-$version-win64"
           New-Item -ItemType Directory -Force "dist/$name" | Out-Null
           Copy-Item src/lha.exe, FORK_MODIFICATIONS.md "dist/$name/"
@@ -60,3 +70,29 @@ jobs:
           name: lha-windows-x64
           path: dist/lha-*-win64.zip
           if-no-files-found: error
+
+  # Only for a release tag: create the release page of the tag, with the package that `build` made.
+  # A published package never changes: if the release page already exists, this job fails instead.
+  # So the package of a given version is always the same file.
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to create the release page and to upload files to it.
+      contents: write
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@v4
+        with:
+          name: lha-windows-x64
+          path: dist
+
+      # `gh` (GitHub CLI) is already on the runner, so no third-party action runs with write permission.
+      # It creates the release as a draft, uploads the package, and then publishes it.
+      # `--verify-tag`: without it, a missing tag would be created from the default branch.
+      - name: Create the release page with the package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" dist/lha-*-win64.zip --verify-tag --title "$GITHUB_REF_NAME"
