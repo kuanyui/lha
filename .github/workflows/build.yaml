@@ -1,0 +1,233 @@
+name: Build LHA
+
+on:
+  push:
+    branches: [ master ]
+    # The name of a release tag is the version in configure.ac,
+    # for example `1.14i-ac20260723-ky20261014`.
+    # For such a tag, the job `release` also puts both packages on the release page of the tag.
+    tags: [ '*-ky[0-9]+' ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libiconv
+            make
+            autoconf
+            automake
+
+      - name: Compile LHA
+        shell: msys2 {0}
+        run: |
+          autoreconf -is
+          # static link libiconv
+          ./configure \
+            LDFLAGS="-static" \
+            CFLAGS="-O2" \
+            LIBS="-liconv" \
+            --with-tmp-file=no \
+            --enable-multibyte-filename=utf8 \
+            ac_cv_func_iconv=yes
+          make
+          ./src/lha --version
+
+      # The terms of LHa for UNIX (man/lha.man) do not allow distributing the binary alone: it must
+      # come with its source code and documents, and with a document that tells what was modified.
+      # So the package has lha.exe, FORK_MODIFICATIONS.md, and the source code of this commit
+      # (`git archive`, so without the files that the build generated), all at the top of the ZIP.
+      - name: Pack lha.exe with its source code
+        shell: pwsh
+        run: |
+          $match = Select-String -Path configure.ac -Pattern '^AC_INIT\(\[LHa for UNIX\], *([^,]+),'
+          if (-not $match) { throw "No version found in configure.ac" }
+          $version = $match.Matches[0].Groups[1].Value
+          # For a tag, the tag name must exactly match the version in configure.ac, including
+          # capitalization. This rule keeps the tag and the ZIP file names at the same version.
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne $version) {
+            throw "The tag '$env:GITHUB_REF_NAME' is not the version in configure.ac ('$version')"
+          }
+          $name = "lha-$version-win64"
+          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
+          Copy-Item src/lha.exe, FORK_MODIFICATIONS.md "dist/$name/"
+          git archive --format=zip --prefix="lha-$version/" -o "dist/$name/lha-$version-src.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { throw "git archive failed" }
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          Get-ChildItem "dist/$name"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lha-windows-x64
+          path: dist/lha-*-win64.zip
+          if-no-files-found: error
+
+  build-macos:
+    # Not `macos-latest`: GitHub moves that label to newer versions of macOS and Xcode.
+    # A newer Xcode may build `lha` differently, or reject MACOSX_DEPLOYMENT_TARGET below.
+    runs-on: macos-26
+    defaults:
+      run:
+        # `shell: bash` adds `-o pipefail`: when a command in a pipe fails, the step fails too.
+        shell: bash
+    env:
+      # The oldest macOS that `lha` runs on. Without it, `lha` would run only on the macOS
+      # of the runner, or newer.
+      # Not 11.0: the oldest macOS that Xcode 27 can build for is macOS 12.
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      # `autoreconf` needs autoconf and automake. The software list of the runner image has neither.
+      - name: Install autoconf and automake
+        run: brew install autoconf automake
+
+      # This builds a universal binary: `lha` has the code for Apple silicon (arm64)
+      # and the code for Intel (x86_64).
+      # - `--disable-dependency-tracking`: the dependency tracking of automake does not work
+      #   with two `-arch` flags.
+      # - `lha_cv_func_iconv_has_utf8mac=no`: convert file names to "UTF-8", not to "UTF-8-MAC".
+      #   Without it, configure picks UTF-8-MAC when the iconv of the runner knows it.
+      #   UTF-8-MAC writes some characters as several code points: for example, が as か
+      #   and a combining ゛. "UTF-8" keeps が as one code point, like most text files.
+      - name: Compile LHA
+        run: |
+          autoreconf -is
+          ./configure \
+            CFLAGS="-O2 -arch arm64 -arch x86_64" \
+            --disable-dependency-tracking \
+            --enable-multibyte-filename=utf8 \
+            lha_cv_func_iconv_has_utf8mac=no
+          make
+          ./src/lha --version
+
+      # There is no Mac to try this `lha` on before the release.
+      # So this step and the 3 steps after it check `lha` here.
+      # The runner has an Apple silicon CPU, so these 4 steps run only the arm64 code.
+      # The x86_64 code is inspected, but not run.
+      - name: Check the CPUs and the oldest macOS
+        run: |
+          lipo -info src/lha
+          lipo src/lha -verify_arch arm64 x86_64
+          for arch in arm64 x86_64; do
+            build_version="$(vtool -arch "$arch" -show-build src/lha)"
+            echo "$build_version"
+            if ! grep -Eq '^ *minos 12\.0$' <<< "$build_version"; then
+              echo "::error::The minimum macOS version of the $arch code is not 12.0."
+              exit 1
+            fi
+          done
+
+      # A library from Homebrew on the runner would be missing on other Macs.
+      # So the code for each CPU must link to exactly 2 libraries, both from macOS:
+      # libSystem and libiconv.
+      - name: Check the libraries that lha needs
+        run: |
+          for arch in arm64 x86_64; do
+            output="$(otool -arch "$arch" -L src/lha)"
+            echo "$output"
+            # The lines of libraries start with a tab. The first line names the file.
+            libraries="$(grep -E '^[[:space:]]' <<< "$output" | awk '{ print $1 }' | LC_ALL=C sort -u)"
+            if [ "$libraries" != $'/usr/lib/libSystem.B.dylib\n/usr/lib/libiconv.2.dylib' ]; then
+              echo "::error::The $arch code links to other libraries than libSystem and libiconv."
+              exit 1
+            fi
+          done
+
+      - name: Run the tests of LHa for UNIX
+        run: make check
+
+      # Make an archive with a Shift_JIS file name that has が. Then check that:
+      # - `lha l --archive-kanji-code=sjis` prints the name with が as one code point.
+      #   (See `lha_cv_func_iconv_has_utf8mac=no` above.)
+      # - `lha -p -q` prints the content of the file.
+      - name: Check a Shift_JIS file name with が
+        working-directory: ${{ runner.temp }}
+        run: |
+          lha="$GITHUB_WORKSPACE/src/lha"
+          name=$'\xe3\x81\x8c.txt'  # が.txt, with が as one character (U+304C)
+          echo hello > "$name"
+          "$lha" c --archive-kanji-code=sjis --system-kanji-code=utf8 test.lzh "$name"
+          if ! "$lha" l --archive-kanji-code=sjis test.lzh | grep -F "$name"; then
+            echo "::error::lha l does not print the name が.txt with が as one character."
+            exit 1
+          fi
+          if [ "$("$lha" -p -q test.lzh)" != hello ]; then
+            echo "::error::lha -p -q does not print the content of the file."
+            exit 1
+          fi
+
+      # The same package as the Windows one (see "Pack lha.exe with its source code" above),
+      # with `lha` instead of `lha.exe`.
+      - name: Pack lha with its source code
+        run: |
+          version="$(sed -n -E 's/^AC_INIT\(\[LHa for UNIX\], *([^,]+),.*/\1/p' configure.ac)"
+          if [ -z "$version" ]; then
+            echo "::error::No version found in configure.ac"
+            exit 1
+          fi
+          # The same rule as on Windows: for a tag, the tag name must exactly match the version.
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "::error::The tag '$GITHUB_REF_NAME' is not the version in configure.ac ('$version')"
+            exit 1
+          fi
+          name="lha-$version-macos-universal"
+          mkdir -p "dist/$name"
+          cp src/lha FORK_MODIFICATIONS.md "dist/$name/"
+          git archive --format=zip --prefix="lha-$version/" -o "dist/$name/lha-$version-src.zip" HEAD
+          (cd "dist/$name" && zip -X "../$name.zip" lha FORK_MODIFICATIONS.md "lha-$version-src.zip")
+          zipinfo "dist/$name.zip"
+          # Unzip the ZIP, and run the unzipped `lha`.
+          # This checks that the ZIP keeps the executable bit of `lha`.
+          unzip -q "dist/$name.zip" -d "$RUNNER_TEMP/unzipped"
+          "$RUNNER_TEMP/unzipped/lha" --version
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lha-macos-universal
+          path: dist/lha-*-macos-universal.zip
+          if-no-files-found: error
+
+  # Only for a release tag: create the release page of the tag, with the packages that
+  # `build-windows` and `build-macos` made.
+  # A published package never changes: if the release page already exists, this job fails instead.
+  # So the package of a given version is always the same file.
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [ build-windows, build-macos ]
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to create the release page and to upload files to it.
+      contents: write
+    steps:
+      # Both artifacts: `lha-windows-x64` and `lha-macos-universal`.
+      # Their ZIP files go into the same folder.
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lha-*
+          path: dist
+          merge-multiple: true
+
+      # `gh` (GitHub CLI) is already on the runner, so no third-party action runs with write permission.
+      # It creates the release as a draft, uploads the packages, and then publishes it.
+      # `--verify-tag`: without it, a missing tag would be created from the default branch.
+      - name: Create the release page with the packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/lha-*-win64.zip \
+            dist/lha-*-macos-universal.zip \
+            --verify-tag --title "$GITHUB_REF_NAME"
