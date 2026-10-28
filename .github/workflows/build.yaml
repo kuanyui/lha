@@ -12,7 +12,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
@@ -65,7 +65,7 @@ jobs:
           Get-ChildItem "dist/$name"
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lha-windows-x64
           path: dist/lha-*-win64.zip
@@ -85,7 +85,7 @@ jobs:
       # Not 11.0: the oldest macOS that Xcode 27 can build for is macOS 12.
       MACOSX_DEPLOYMENT_TARGET: '12.0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `autoreconf` needs autoconf and automake. The software list of the runner image has neither.
       - name: Install autoconf and automake
@@ -192,7 +192,7 @@ jobs:
           "$RUNNER_TEMP/unzipped/lha" --version
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lha-macos-universal
           path: dist/lha-*-macos-universal.zip
@@ -213,7 +213,7 @@ jobs:
       # Both artifacts: `lha-windows-x64` and `lha-macos-universal`.
       # Their ZIP files go into the same folder.
       - name: Download the packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: lha-*
           path: dist
