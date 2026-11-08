@@ -2,7 +2,7 @@
 
 This repository, https://github.com/kuanyui/lha, is a fork of LHa for UNIX
 (https://github.com/jca02266/lha). It builds `lha.exe` for Windows (x86_64), and `lha` for
-macOS (Apple silicon and Intel).
+macOS (Apple silicon and Intel) and for Linux (x86_64).
 
 Its changes to LHa for UNIX:
 
@@ -15,8 +15,8 @@ Its changes to LHa for UNIX:
   of `lha --version` and in the names of the ZIP files.
 - `.github/workflows/build.yaml`: builds `lha.exe` and `lha`. The workflow packs each of
   them with this file (`FORK_MODIFICATIONS.md`) and `lha-VERSION-src.zip`.
-  `lha-VERSION-src.zip` is the source code of the commit that both binaries were built from.
-  For a tag whose name is the version in `configure.ac`, the workflow also puts both
+  `lha-VERSION-src.zip` is the source code of the commit that all the binaries were built from.
+  For a tag whose name is the version in `configure.ac`, the workflow also puts all the
   packages on the release page of the tag.
   - `lha-VERSION-win64.zip` has `lha.exe`. It is built with MSYS2 (MINGW64), and statically
     linked with libiconv.
@@ -24,6 +24,9 @@ Its changes to LHa for UNIX:
     (arm64) and Intel (x86_64). It runs on macOS 12 or later, and uses the libiconv of
     macOS. It converts file names to "UTF-8", not to "UTF-8-MAC". UTF-8-MAC writes some
     characters as several code points: for example, が as か and a combining ゛.
+  - `lha-VERSION-linux-x86_64.zip` has `lha`. It is built on Ubuntu 24.04, and runs on Linux
+    (x86_64) with glibc 2.39 or later, for example Ubuntu 24.04 or later. It uses the iconv
+    of glibc, and needs no other library.
 - This file.
 
 ## The packages of `lha.exe` and `lha`
